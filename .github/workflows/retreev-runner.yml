@@ -23,6 +23,8 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: retreevhq
+          repositories: "retreev"
 
       - name: Download backend source artifact
         run: |
@@ -117,6 +119,8 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: retreevhq
+          repositories: "retreev"
 
       - name: Download backend source artifact
         run: |
@@ -208,6 +212,8 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: retreevhq
+          repositories: "retreev"
 
       - name: Download backend source artifact
         run: |
