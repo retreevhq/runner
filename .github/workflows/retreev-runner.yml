@@ -263,7 +263,7 @@ jobs:
         with:
           context: ./backend
           file: ./backend/Dockerfile
-          target: inference-base
+          target: inference
           push: true
           tags: |
             ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}-inference
