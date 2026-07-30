@@ -150,6 +150,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
         id: buildx
         with:
+          driver: docker
           buildkitd-config-inline: |
             [worker.oci]
               compression-type = "zstd"
@@ -177,17 +178,11 @@ jobs:
       - name: Restore UV cache mounts
         uses: reproducible-containers/buildkit-cache-dance@v3
         with:
-          builder: ${{ steps.buildx.outputs.name }}
           cache-dir: backend/cache-mount
           cache-map: |
             {
               "uv-cache": "/root/.cache/uv"
             }
-
-      - name: Set up Docker auth for BuildKit
-        run: |
-          AUTH=$(echo -n "${{ steps.app-token.outputs.app-slug }}[bot]:${{ steps.app-token.outputs.token }}" | base64 -w0)
-          echo "DOCKER_AUTH_CONFIG={\"auths\":{\"ghcr.io\":{\"auth\":\"$AUTH\"}}}" >> "$GITHUB_ENV"
 
       - name: Build and push core image
         uses: docker/build-push-action@v7
@@ -201,8 +196,8 @@ jobs:
             ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
             ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
             ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_tag }}
-          cache-from: type=gha,scope=core
-          cache-to: type=gha,scope=core,mode=max
+          cache-from: type=inline
+          cache-to: type=inline
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.event.client_payload.source_repo }}
             org.opencontainers.image.revision=${{ github.event.client_payload.short_sha }}
@@ -254,6 +249,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
         id: buildx
         with:
+          driver: docker
           buildkitd-config-inline: |
             [worker.oci]
               compression-type = "zstd"
@@ -281,17 +277,11 @@ jobs:
       - name: Restore UV cache mounts
         uses: reproducible-containers/buildkit-cache-dance@v3
         with:
-          builder: ${{ steps.buildx.outputs.name }}
           cache-dir: backend/cache-mount
           cache-map: |
             {
               "uv-cache": "/root/.cache/uv"
             }
-
-      - name: Set up Docker auth for BuildKit
-        run: |
-          AUTH=$(echo -n "${{ steps.app-token.outputs.app-slug }}[bot]:${{ steps.app-token.outputs.token }}" | base64 -w0)
-          echo "DOCKER_AUTH_CONFIG={\"auths\":{\"ghcr.io\":{\"auth\":\"$AUTH\"}}}" >> "$GITHUB_ENV"
 
       - name: Build and push inference image
         uses: docker/build-push-action@v7
@@ -305,10 +295,8 @@ jobs:
             ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
             ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
             ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_tag }}
-          cache-from: |
-            type=gha,scope=inference
-            type=gha,scope=core
-          cache-to: type=gha,scope=inference,mode=max
+          cache-from: type=inline
+          cache-to: type=inline
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.event.client_payload.source_repo }}
             org.opencontainers.image.revision=${{ github.event.client_payload.short_sha }}
