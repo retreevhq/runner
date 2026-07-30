@@ -20,7 +20,7 @@ jobs:
       - name: Download backend source artifact
         run: |
           curl -L \
-            -H "Authorization: token ${{ secrets.PRIVATE_REPO_READ_TOKEN }}" \
+            -H "Authorization: Bearer ${{ secrets.CROSS_REPO_APP_TOKEN }}" \
             -o /tmp/artifact.zip \
             "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
 
@@ -107,7 +107,7 @@ jobs:
       - name: Download backend source artifact
         run: |
           curl -L \
-            -H "Authorization: token ${{ secrets.PRIVATE_REPO_READ_TOKEN }}" \
+            -H "Authorization: Bearer ${{ secrets.CROSS_REPO_APP_TOKEN }}" \
             -o /tmp/artifact.zip \
             "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
 
@@ -191,7 +191,7 @@ jobs:
       - name: Download backend source artifact
         run: |
           curl -L \
-            -H "Authorization: token ${{ secrets.PRIVATE_REPO_READ_TOKEN }}" \
+            -H "Authorization: Bearer ${{ secrets.CROSS_REPO_APP_TOKEN }}" \
             -o /tmp/artifact.zip \
             "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
 
@@ -245,12 +245,12 @@ jobs:
         with:
           context: ./backend
           file: ./backend/Dockerfile
-          target: inference
+          target: inference-base
           push: true
           tags: |
-            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
-            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
-            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_tag }}
+            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}-inference
+            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}-inference
+            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_tag }}-inference
           cache-from: |
             type=gha,scope=inference
             type=gha,scope=core
