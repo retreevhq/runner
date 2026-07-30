@@ -503,10 +503,8 @@ jobs:
           gh release create "backend/${{ github.event.client_payload.version }}" \
             --repo "${{ github.event.client_payload.source_repo }}" \
             --title "Backend ${{ github.event.client_payload.version }}" \
-            --notes "## Backend ${{ github.event.client_payload.version }}
-
-          **Environment**: ${{ github.event.client_payload.env_name }}
-          **Commit**: ${{ github.event.client_payload.short_sha }}" \
+            --generate-notes \
+            --verify-tag \
             --latest
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
