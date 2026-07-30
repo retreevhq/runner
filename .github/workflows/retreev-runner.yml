@@ -26,7 +26,7 @@ jobs:
 
       - name: Download backend source artifact
         run: |
-          curl -L \
+          curl -L --location-trusted \
             -H "Authorization: Bearer ${{ steps.app-token.outputs.token }}" \
             -o /tmp/artifact.zip \
             "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
@@ -120,7 +120,7 @@ jobs:
 
       - name: Download backend source artifact
         run: |
-          curl -L \
+          curl -L --location-trusted \
             -H "Authorization: Bearer ${{ steps.app-token.outputs.token }}" \
             -o /tmp/artifact.zip \
             "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
@@ -211,7 +211,7 @@ jobs:
 
       - name: Download backend source artifact
         run: |
-          curl -L \
+          curl -L --location-trusted \
             -H "Authorization: Bearer ${{ steps.app-token.outputs.token }}" \
             -o /tmp/artifact.zip \
             "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
