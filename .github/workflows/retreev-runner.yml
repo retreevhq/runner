@@ -1,0 +1,265 @@
+---
+name: Retreev Runner
+
+on:
+  repository_dispatch:
+    types:
+      - "trigger-heavy-build"
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Download backend source artifact
+        run: |
+          curl -L \
+            -H "Authorization: token ${{ secrets.PRIVATE_REPO_READ_TOKEN }}" \
+            -o /tmp/artifact.zip \
+            "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
+
+      - name: Extract source code
+        run: |
+          mkdir -p backend
+          unzip -p /tmp/artifact.zip backend-src.tar.gz > /tmp/backend-src.tar.gz
+          tar -xzf /tmp/backend-src.tar.gz -C backend
+          rm -f /tmp/artifact.zip /tmp/backend-src.tar.gz
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        id: buildx
+        with:
+          buildkitd-config-inline: |
+            [worker.oci]
+              compression-type = "zstd"
+              compression-level = 3
+
+      - name: Login to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Cache UV downloads
+        uses: actions/cache@v4
+        id: cache-uv
+        with:
+          path: backend/cache-mount
+          key: uv-${{ runner.os }}-${{ hashFiles('backend/uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Restore UV cache mounts
+        uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-dir: backend/cache-mount
+          cache-map: |
+            {
+              "uv-cache": "/root/.cache/uv"
+            }
+
+      - name: Build test image (with dev deps)
+        uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          target: dev
+          tags: retreev-test:${{ github.event.client_payload.short_sha }}
+          load: true
+          cache-from: |
+            type=gha,scope=test
+            type=gha,scope=core
+          cache-to: type=gha,scope=test,mode=max
+
+      - name: Run tests
+        run: |
+          docker run --rm \
+            --entrypoint "" \
+            retreev-test:${{ github.event.client_payload.short_sha }} \
+            sh -c "cd /src && uv run pytest tests/ -v"
+        timeout-minutes: 10
+
+      - name: Clean up Docker
+        if: always()
+        run: docker image prune -f || true
+
+  build_core:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Download backend source artifact
+        run: |
+          curl -L \
+            -H "Authorization: token ${{ secrets.PRIVATE_REPO_READ_TOKEN }}" \
+            -o /tmp/artifact.zip \
+            "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
+
+      - name: Extract source code
+        run: |
+          mkdir -p backend
+          unzip -p /tmp/artifact.zip backend-src.tar.gz > /tmp/backend-src.tar.gz
+          tar -xzf /tmp/backend-src.tar.gz -C backend
+          rm -f /tmp/artifact.zip /tmp/backend-src.tar.gz
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        id: buildx
+        with:
+          buildkitd-config-inline: |
+            [worker.oci]
+              compression-type = "zstd"
+              compression-level = 3
+
+      - name: Login to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Cache UV downloads
+        uses: actions/cache@v4
+        id: cache-uv
+        with:
+          path: backend/cache-mount
+          key: uv-${{ runner.os }}-${{ hashFiles('backend/uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Restore UV cache mounts
+        uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-dir: backend/cache-mount
+          cache-map: |
+            {
+              "uv-cache": "/root/.cache/uv"
+            }
+
+      - name: Build and push core image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          target: cpu-base
+          push: true
+          tags: |
+            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
+            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
+            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_tag }}
+          cache-from: type=gha,scope=core
+          cache-to: type=gha,scope=core,mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.event.client_payload.source_repo }}
+            org.opencontainers.image.revision=${{ github.event.client_payload.short_sha }}
+            org.opencontainers.image.created=${{ github.event.client_payload.run_id }}
+
+      - name: Clean up Docker
+        if: always()
+        run: docker image prune -f || true
+
+  build_inference:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Download backend source artifact
+        run: |
+          curl -L \
+            -H "Authorization: token ${{ secrets.PRIVATE_REPO_READ_TOKEN }}" \
+            -o /tmp/artifact.zip \
+            "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
+
+      - name: Extract source code
+        run: |
+          mkdir -p backend
+          unzip -p /tmp/artifact.zip backend-src.tar.gz > /tmp/backend-src.tar.gz
+          tar -xzf /tmp/backend-src.tar.gz -C backend
+          rm -f /tmp/artifact.zip /tmp/backend-src.tar.gz
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        id: buildx
+        with:
+          buildkitd-config-inline: |
+            [worker.oci]
+              compression-type = "zstd"
+              compression-level = 3
+
+      - name: Login to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Cache UV downloads
+        uses: actions/cache@v4
+        id: cache-uv
+        with:
+          path: backend/cache-mount
+          key: uv-${{ runner.os }}-${{ hashFiles('backend/uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Restore UV cache mounts
+        uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-dir: backend/cache-mount
+          cache-map: |
+            {
+              "uv-cache": "/root/.cache/uv"
+            }
+
+      - name: Build and push inference image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          target: inference
+          push: true
+          tags: |
+            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
+            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
+            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_tag }}
+          cache-from: |
+            type=gha,scope=inference
+            type=gha,scope=core
+          cache-to: type=gha,scope=inference,mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.event.client_payload.source_repo }}
+            org.opencontainers.image.revision=${{ github.event.client_payload.short_sha }}
+            org.opencontainers.image.created=${{ github.event.client_payload.run_id }}
+
+      - name: Clean up Docker
+        if: always()
+        run: docker image prune -f || true
