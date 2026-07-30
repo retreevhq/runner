@@ -61,8 +61,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ steps.app-token.outputs.app-slug }}[bot]
-          password: ${{ steps.app-token.outputs.token }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
 
       - name: Cache UV downloads
         uses: actions/cache@v4
@@ -160,11 +160,11 @@ jobs:
         run: docker logout ghcr.io || true
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: retreevhq
-          password: ${{ secrets.RETREEV_GHCR_TOKEN }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
 
       - name: Cache UV downloads
         uses: actions/cache@v4
@@ -262,8 +262,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ steps.app-token.outputs.app-slug }}[bot]
-          password: ${{ steps.app-token.outputs.token }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
 
       - name: Cache UV downloads
         uses: actions/cache@v4
