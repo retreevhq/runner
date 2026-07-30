@@ -22,7 +22,6 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: retreevhq
           repositories: "retreev"
-          permission-packages: "write"
 
       - name: Download backend source artifact
         run: |
@@ -116,7 +115,6 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: retreevhq
           repositories: "retreev"
-          permission-packages: "write"
 
       - name: Download backend source artifact
         run: |
@@ -207,7 +205,6 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: retreevhq
           repositories: "retreev"
-          permission-packages: "write"
 
       - name: Download backend source artifact
         run: |
