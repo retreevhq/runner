@@ -191,6 +191,7 @@ jobs:
           file: ./backend/Dockerfile
           target: cpu-base
           push: true
+          provenance: false
           tags: |
             ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
             ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
@@ -289,6 +290,7 @@ jobs:
           file: ./backend/Dockerfile
           target: inference
           push: true
+          provenance: false
           tags: |
             ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
             ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
