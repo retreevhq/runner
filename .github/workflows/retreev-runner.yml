@@ -12,9 +12,6 @@ env:
 jobs:
   test:
     runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: backend
 
     steps:
       - name: Generate Runtime Cross-Repo Token
@@ -108,9 +105,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    defaults:
-      run:
-        working-directory: backend
 
     steps:
       - name: Generate Runtime Cross-Repo Token
