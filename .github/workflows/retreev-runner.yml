@@ -164,7 +164,7 @@ jobs:
         with:
           registry: ghcr.io
           username: retreevhq
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.RETREEV_GHCR_TOKEN }}
 
       - name: Cache UV downloads
         uses: actions/cache@v4
