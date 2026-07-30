@@ -17,10 +17,17 @@ jobs:
         working-directory: backend
 
     steps:
+      - name: Generate Runtime Cross-Repo Token
+        uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Download backend source artifact
         run: |
           curl -L \
-            -H "Authorization: Bearer ${{ secrets.CROSS_REPO_APP_TOKEN }}" \
+            -H "Authorization: Bearer ${{ steps.app-token.outputs.token }}" \
             -o /tmp/artifact.zip \
             "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
 
@@ -104,10 +111,17 @@ jobs:
         working-directory: backend
 
     steps:
+      - name: Generate Runtime Cross-Repo Token
+        uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Download backend source artifact
         run: |
           curl -L \
-            -H "Authorization: Bearer ${{ secrets.CROSS_REPO_APP_TOKEN }}" \
+            -H "Authorization: Bearer ${{ steps.app-token.outputs.token }}" \
             -o /tmp/artifact.zip \
             "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
 
@@ -188,10 +202,17 @@ jobs:
         working-directory: backend
 
     steps:
+      - name: Generate Runtime Cross-Repo Token
+        uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Download backend source artifact
         run: |
           curl -L \
-            -H "Authorization: Bearer ${{ secrets.CROSS_REPO_APP_TOKEN }}" \
+            -H "Authorization: Bearer ${{ steps.app-token.outputs.token }}" \
             -o /tmp/artifact.zip \
             "https://api.github.com/repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip"
 
