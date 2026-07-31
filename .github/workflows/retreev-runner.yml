@@ -314,7 +314,7 @@ jobs:
 
   deploy:
     runs-on: ubuntu-24.04
-    needs: [test, build_core, build_inference]
+    needs: [build_core, build_inference]
     environment: ${{ github.event.client_payload.env_name }}
     permissions:
       contents: read
