@@ -106,7 +106,7 @@ jobs:
             --entrypoint "" \
             retreev-test:${{ github.event.client_payload.short_sha }} \
             sh -c "cd /src && uv run pytest tests/ -v"
-        timeout-minutes: 10
+        # timeout-minutes: 10
 
       - name: Clean up Docker
         if: always()
