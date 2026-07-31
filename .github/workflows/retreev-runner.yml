@@ -500,12 +500,22 @@ jobs:
 
       - name: Create Release
         run: |
-          gh release create "backend/${{ github.event.client_payload.version }}" \
-            --repo "${{ github.event.client_payload.source_repo }}" \
-            --title "Backend ${{ github.event.client_payload.version }}" \
-            --notes-from-tag \
-            --verify-tag \
-            --latest
+          TAG="backend/${{ github.event.client_payload.version }}"
+          if git tag -l --format="%(contents)" "$TAG" | grep -q .; then
+            # Annotated tag — use the tag message (written by OpenCode)
+            gh release create "$TAG" \
+              --title "Backend ${{ github.event.client_payload.version }}" \
+              --notes-from-tag \
+              --verify-tag \
+              --latest
+          else
+            # Lightweight tag — auto-generate from commit history
+            gh release create "$TAG" \
+              --title "Backend ${{ github.event.client_payload.version }}" \
+              --generate-notes \
+              --verify-tag \
+              --latest
+          fi
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
