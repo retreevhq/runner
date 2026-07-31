@@ -476,7 +476,7 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     needs: [verify_core, verify_inference]
-    if: github.event.client_payload.is_release == 'true' && needs.verify_core.result == 'success' && needs.verify_inference.result == 'success'
+    if: github.event.client_payload.env_name == 'production' && needs.verify_core.result == 'success' && needs.verify_inference.result == 'success'
     permissions:
       contents: write
 
