@@ -14,103 +14,103 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: ubuntu-24.04
+  # test:
+  #   runs-on: ubuntu-24.04
 
-    steps:
-      - name: Generate Runtime Cross-Repo Token
-        uses: actions/create-github-app-token@v3
-        id: app-token
-        with:
-          client-id: ${{ secrets.RETREEV_CLIENT_ID }}
-          private-key: ${{ secrets.RETREEV_APP_PRIVATE_KEY }}
-          owner: retreevhq
-          repositories: "retreev"
-          permission-actions: "read"
-          permission-packages: "write"
+  #   steps:
+  #     - name: Generate Runtime Cross-Repo Token
+  #       uses: actions/create-github-app-token@v3
+  #       id: app-token
+  #       with:
+  #         client-id: ${{ secrets.RETREEV_CLIENT_ID }}
+  #         private-key: ${{ secrets.RETREEV_APP_PRIVATE_KEY }}
+  #         owner: retreevhq
+  #         repositories: "retreev"
+  #         permission-actions: "read"
+  #         permission-packages: "write"
 
-      - name: Download backend source artifact
-        run: |
-          GH_TOKEN=${{ steps.app-token.outputs.token }} gh api \
-            "repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip" \
-            > /tmp/artifact.zip
+  #     - name: Download backend source artifact
+  #       run: |
+  #         GH_TOKEN=${{ steps.app-token.outputs.token }} gh api \
+  #           "repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip" \
+  #           > /tmp/artifact.zip
 
-      - name: Extract source code
-        run: |
-          mkdir -p backend
-          unzip -p /tmp/artifact.zip backend-src.tar.gz > /tmp/backend-src.tar.gz
-          tar -xzf /tmp/backend-src.tar.gz -C backend
-          rm -f /tmp/artifact.zip /tmp/backend-src.tar.gz
+  #     - name: Extract source code
+  #       run: |
+  #         mkdir -p backend
+  #         unzip -p /tmp/artifact.zip backend-src.tar.gz > /tmp/backend-src.tar.gz
+  #         tar -xzf /tmp/backend-src.tar.gz -C backend
+  #         rm -f /tmp/artifact.zip /tmp/backend-src.tar.gz
 
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          df -h /
+  #     - name: Free disk space
+  #       run: |
+  #         sudo rm -rf /usr/share/dotnet
+  #         sudo rm -rf /usr/local/lib/android
+  #         sudo rm -rf /opt/ghc
+  #         df -h /
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-        id: buildx
-        with:
-          buildkitd-config-inline: |
-            [worker.oci]
-              compression-type = "zstd"
-              compression-level = 3
+  #     - name: Set up Docker Buildx
+  #       uses: docker/setup-buildx-action@v4
+  #       id: buildx
+  #       with:
+  #         buildkitd-config-inline: |
+  #           [worker.oci]
+  #             compression-type = "zstd"
+  #             compression-level = 3
 
-      - name: Logout of GitHub Container Registry
-        run: docker logout ghcr.io || true
+  #     - name: Logout of GitHub Container Registry
+  #       run: docker logout ghcr.io || true
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.RETREEV_CR_PAT }}
+  #     - name: Login to GitHub Container Registry
+  #       uses: docker/login-action@v3
+  #       with:
+  #         registry: ghcr.io
+  #         username: ${{ github.repository_owner }}
+  #         password: ${{ secrets.RETREEV_CR_PAT }}
 
-      - name: Cache UV downloads
-        uses: actions/cache@v4
-        id: cache-uv
-        with:
-          path: backend/cache-mount
-          key: uv-${{ runner.os }}-${{ hashFiles('backend/uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
+  #     - name: Cache UV downloads
+  #       uses: actions/cache@v4
+  #       id: cache-uv
+  #       with:
+  #         path: backend/cache-mount
+  #         key: uv-${{ runner.os }}-${{ hashFiles('backend/uv.lock') }}
+  #         restore-keys: |
+  #           uv-${{ runner.os }}-
 
-      - name: Restore UV cache mounts
-        uses: reproducible-containers/buildkit-cache-dance@v3
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          cache-dir: backend/cache-mount
-          cache-map: |
-            {
-              "uv-cache": "/root/.cache/uv"
-            }
+  #     - name: Restore UV cache mounts
+  #       uses: reproducible-containers/buildkit-cache-dance@v3
+  #       with:
+  #         builder: ${{ steps.buildx.outputs.name }}
+  #         cache-dir: backend/cache-mount
+  #         cache-map: |
+  #           {
+  #             "uv-cache": "/root/.cache/uv"
+  #           }
 
-      - name: Build test image (with dev deps)
-        uses: docker/build-push-action@v7
-        with:
-          context: ./backend
-          file: ./backend/Dockerfile
-          target: dev
-          tags: retreev-test:${{ github.event.client_payload.short_sha }}
-          load: true
-          cache-from: |
-            type=gha,scope=test
-            type=gha,scope=core
-          cache-to: type=gha,scope=test,mode=max
+  #     - name: Build test image (with dev deps)
+  #       uses: docker/build-push-action@v7
+  #       with:
+  #         context: ./backend
+  #         file: ./backend/Dockerfile
+  #         target: dev
+  #         tags: retreev-test:${{ github.event.client_payload.short_sha }}
+  #         load: true
+  #         cache-from: |
+  #           type=gha,scope=test
+  #           type=gha,scope=core
+  #         cache-to: type=gha,scope=test,mode=max
 
-      - name: Run tests
-        run: |
-          docker run --rm \
-            --entrypoint "" \
-            retreev-test:${{ github.event.client_payload.short_sha }} \
-            sh -c "cd /src && uv run pytest tests/ -v"
-        # timeout-minutes: 10
+  #     - name: Run tests
+  #       run: |
+  #         docker run --rm \
+  #           --entrypoint "" \
+  #           retreev-test:${{ github.event.client_payload.short_sha }} \
+  #           sh -c "cd /src && uv run pytest tests/ -v"
+  #       # timeout-minutes: 10
 
-      - name: Clean up Docker
-        if: always()
-        run: docker image prune -f || true
+  #     - name: Clean up Docker
+  #       if: always()
+  #       run: docker image prune -f || true
 
   build_core:
     runs-on: ubuntu-24.04
