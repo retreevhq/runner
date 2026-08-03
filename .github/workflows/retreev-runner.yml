@@ -201,15 +201,15 @@ jobs:
           push: true
           provenance: false
           tags: |
-            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
-            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
-            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_tag }}
+            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
+            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_tag }}
           cache-from: type=gha,scope=core
           cache-to: type=gha,scope=core,mode=max
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.event.client_payload.source_repo }}
             org.opencontainers.image.revision=${{ github.event.client_payload.short_sha }}
-            org.opencontainers.image.created=${{ github.event.client_payload.run_id }}
+            org.opencontainers.image.created=${{ github.run_id }}
 
       - name: Clean up Docker
         if: always()
@@ -304,9 +304,9 @@ jobs:
           push: true
           provenance: false
           tags: |
-            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
-            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
-            ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_tag }}
+            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
+            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_tag }}
           cache-from: |
             type=gha,scope=inference
             type=gha,scope=core
@@ -314,7 +314,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.event.client_payload.source_repo }}
             org.opencontainers.image.revision=${{ github.event.client_payload.short_sha }}
-            org.opencontainers.image.created=${{ github.event.client_payload.run_id }}
+            org.opencontainers.image.created=${{ github.run_id }}
 
       - name: Clean up Docker
         if: always()
@@ -393,7 +393,7 @@ jobs:
           ssh_key: ${{ secrets.RETREEV_DEPLOY_SSH_KEY }}
           registry_auth: true
           registry_host: ghcr.io
-          registry_user: ${{ github.event.client_payload.repo_owner }}
+          registry_user: ${{ github.repository_owner }}
           registry_pass: ${{ secrets.RETREEV_CR_PAT }}
           resolve_image: changed
           prune: true
@@ -510,7 +510,7 @@ jobs:
 
             STACK="retreev_${{ github.event.client_payload.env_short }}"
             SERVICE="${STACK}_inference"
-            IMAGE="ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}-inference@${{ needs.build_inference.outputs.image_digest }}"
+            IMAGE="ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference@${{ needs.build_inference.outputs.image_digest }}"
             EXPECTED_VERSION="${{ github.event.client_payload.version }}"
             EXPECTED_SHA="${{ github.event.client_payload.short_sha }}"
             EXPECTED_PROTOCOL="${{ github.event.client_payload.inference_protocol_version }}"
@@ -589,7 +589,7 @@ jobs:
 
             echo "Updating ${SERVICE} from ${PREVIOUS_IMAGE} to ${IMAGE}."
             echo "${{ secrets.RETREEV_CR_PAT }}" | docker login ghcr.io \
-              --username "${{ github.event.client_payload.repo_owner }}" \
+              --username "${{ github.repository_owner }}" \
               --password-stdin
             docker service update \
               --with-registry-auth \
@@ -651,7 +651,7 @@ jobs:
               "${STACK}_scheduler"
             )
             INFERENCE_SERVICE="${STACK}_inference"
-            IMAGE="ghcr.io/${{ github.event.client_payload.repo_owner }}/${{ github.event.client_payload.repo_name }}@${{ needs.build_core.outputs.image_digest }}"
+            IMAGE="ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}@${{ needs.build_core.outputs.image_digest }}"
             EXPECTED_VERSION="${{ github.event.client_payload.version }}"
             EXPECTED_SHA="${{ github.event.client_payload.short_sha }}"
             EXPECTED_PROTOCOL="${{ github.event.client_payload.inference_protocol_version }}"
@@ -785,7 +785,7 @@ jobs:
             fi
 
             echo "${{ secrets.RETREEV_CR_PAT }}" | docker login ghcr.io \
-              --username "${{ github.event.client_payload.repo_owner }}" \
+              --username "${{ github.repository_owner }}" \
               --password-stdin
 
             MIGRATION_TASKS_BEFORE=$(docker service ps -q "$MIGRATION_SERVICE" || true)
