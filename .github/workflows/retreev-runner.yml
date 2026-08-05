@@ -10,7 +10,7 @@ env:
   REGISTRY: ghcr.io
 
 concurrency:
-  group: retreev-${{ github.event.client_payload.env_short }}
+  group: retreev-${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.component }}
   cancel-in-progress: false
 
 jobs:
