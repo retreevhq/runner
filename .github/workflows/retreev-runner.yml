@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   deploy:
-    uses: retreevhq/retreev/.github/workflows/deploy.backend.yml@dev
+    uses: retreevhq/retreev/.github/workflows/deploy.backend.yml@main
     with:
       artifact_id: ${{ github.event.client_payload.artifact_id }}
       source_repo: ${{ github.event.client_payload.source_repo }}
