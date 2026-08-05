@@ -12,6 +12,8 @@ concurrency:
 
 jobs:
   deploy:
+    name: Deploy Retreev Backend
+
     uses: retreevhq/retreev/.github/workflows/deploy.backend.yml@main
     with:
       artifact_id: ${{ github.event.client_payload.artifact_id }}
