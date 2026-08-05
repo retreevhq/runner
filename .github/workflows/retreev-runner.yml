@@ -983,12 +983,17 @@ jobs:
           curl -X POST ${{ secrets.RETREEV_SLACK_WEBHOOK_URL }} \
             -H 'Content-Type: application/json' \
             -d '{
-              "text": "Retreev ${{ github.event.client_payload.env_name }} Deployment ${{ steps.status.outputs.STATUS }}",
+              "text": "Retreev *${{ github.event.client_payload.component }}* deployment to ${{ github.event.client_payload.env_name }} ${{ steps.status.outputs.STATUS }}",
               "attachments": [{
                 "color": "${{ steps.status.outputs.COLOR }}",
                 "fields": [
+                  {"title": "Component", "value": "${{ github.event.client_payload.component }}", "short": true},
+                  {"title": "Environment", "value": "${{ github.event.client_payload.env_name }}", "short": true},
                   {"title": "Version", "value": "${{ github.event.client_payload.version }}", "short": true},
-                  {"title": "Commit", "value": "${{ github.event.client_payload.short_sha }}", "short": true}
+                  {"title": "Commit", "value": "${{ github.event.client_payload.short_sha }}", "short": true},
+                  {"title": "Artifact", "value": "${{ github.event.client_payload.artifact_id }}", "short": true},
+                  {"title": "Source repo", "value": "${{ github.event.client_payload.source_repo }}", "short": true},
+                  {"title": "Run", "value": "https://github.com/retreevhq/runner/actions/runs/${{ github.run_id }}", "short": false}
                 ]
               }]
             }'
