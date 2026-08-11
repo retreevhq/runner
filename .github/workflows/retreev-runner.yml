@@ -661,201 +661,83 @@ jobs:
     environment: ${{ github.event.client_payload.env_name }}
 
     steps:
-      - name: Migrate, update, verify, and roll back core if needed
-        uses: appleboy/ssh-action@v1.2.5
+      - name: Generate Runtime Cross-Repo Token
+        uses: actions/create-github-app-token@v3
+        id: app-token
         with:
-          host: "${{ secrets.RETREEV_DEPLOY_HOST }}"
+          client-id: ${{ secrets.RETREEV_CLIENT_ID }}
+          private-key: ${{ secrets.RETREEV_APP_PRIVATE_KEY }}
+          owner: retreevhq
+          repositories: "retreev"
+          permission-actions: "read"
+
+      - name: Check out deployment configuration
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.client_payload.source_repo }}
+          ref: ${{ github.event.client_payload.short_sha }}
+          token: ${{ steps.app-token.outputs.token }}
+          sparse-checkout: ops
+
+      - name: Download backend source artifact
+        run: |
+          GH_TOKEN=${{ steps.app-token.outputs.token }} gh api \
+            "repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip" \
+            > /tmp/artifact.zip
+
+      - name: Extract source code
+        run: |
+          mkdir -p backend
+          unzip -p /tmp/artifact.zip backend-src.tar.gz > /tmp/backend-src.tar.gz
+          tar -xzf /tmp/backend-src.tar.gz -C backend
+          rm -f /tmp/artifact.zip /tmp/backend-src.tar.gz
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.RETREEV_CR_PAT }}
+
+      - name: Create deployment metadata
+        run: |
+          cat > deployment-info.json << EOF
+          {
+            "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "short_sha": "${{ github.event.client_payload.short_sha }}",
+            "version": "${{ github.event.client_payload.version }}",
+            "environment": "${{ github.event.client_payload.env_name }}"
+          }
+          EOF
+          cat deployment-info.json
+
+      - name: Create env file
+        run: |
+          echo "CORE_TAG=${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}" > ./envfile
+          echo "INFERENCE_TAG=${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}" >> ./envfile
+          echo "APP_VERSION=${{ github.event.client_payload.version }}" >> ./envfile
+          echo "GIT_COMMIT_SHA=${{ github.event.client_payload.short_sha }}" >> ./envfile
+          echo "INFERENCE_VERSION=${{ github.event.client_payload.version }}" >> ./envfile
+          echo "INFERENCE_GIT_COMMIT_SHA=${{ github.event.client_payload.short_sha }}" >> ./envfile
+
+      - name: Deploy core stack
+        uses: cssnr/stack-deploy-action@v1.5.0
+        with:
+          name: retreev_${{ github.event.client_payload.env_short }}
+          file: ops/infra/core/stack.base.yml ops/infra/core/stack.${{ github.event.client_payload.env_short }}.yml
+          host: ${{ secrets.RETREEV_DEPLOY_HOST }}
           port: 22
-          username: deploy
-          key: ${{ secrets.RETREEV_DEPLOY_SSH_KEY }}
-          script: |
-            set -euo pipefail
-
-            STACK="retreev_${{ github.event.client_payload.env_short }}"
-            MIGRATION_SERVICE="${STACK}_db_migrate"
-            CORE_SERVICES=(
-              "${STACK}_api"
-              "${STACK}_worker_media"
-              "${STACK}_worker_notifications"
-              "${STACK}_worker_realtime"
-              "${STACK}_scheduler"
-            )
-            INFERENCE_SERVICE="${STACK}_inference_inference"
-            IMAGE="ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}@${{ needs.build_core.outputs.image_digest }}"
-            EXPECTED_VERSION="${{ github.event.client_payload.version }}"
-            EXPECTED_SHA="${{ github.event.client_payload.short_sha }}"
-            EXPECTED_PROTOCOL="${{ github.event.client_payload.inference_protocol_version }}"
-            CORE_HEALTHCHECK_URL="${{ secrets.RETREEV_BASE_API_URL }}/healthcheck"
-            INFERENCE_HEALTHCHECK_URL="${{ secrets.RETREEV_INFERENCE_API_URL }}/healthcheck"
-
-            service_env() {
-              docker service inspect --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' "$1"
-            }
-
-            env_value() {
-              service_env "$1" | awk -F= -v key="$2" '$1 == key {sub(/^[^=]*=/, ""); print; exit}'
-            }
-
-            service_snapshot() {
-              service="$1"
-              image=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "$service")
-              version=$(env_value "$service" APP_VERSION)
-              sha=$(env_value "$service" GIT_COMMIT_SHA)
-              printf '%s|%s|%s|%s\n' "$service" "$image" "$version" "$sha"
-            }
-
-            core_snapshot() {
-              for service in "${CORE_SERVICES[@]}"; do
-                service_snapshot "$service"
-              done
-            }
-
-            inference_snapshot() {
-              service_snapshot "$INFERENCE_SERVICE"
-            }
-
-            inference_has_expected_protocol() {
-              response=$(curl --fail --silent --show-error "$INFERENCE_HEALTHCHECK_URL" 2>/dev/null || true)
-              protocol=$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin).get('protocol_version', ''))" 2>/dev/null || true)
-              [ "$protocol" = "$EXPECTED_PROTOCOL" ]
-            }
-
-            core_is_live() {
-              response=$(curl --fail --silent --show-error "$CORE_HEALTHCHECK_URL" 2>/dev/null || true)
-              live_version=$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['servers']['api'].get('version', ''))" 2>/dev/null || true)
-              live_sha=$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['servers']['api'].get('commit_sha', ''))" 2>/dev/null || true)
-              live_inference_status=$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['servers']['inference'].get('status', ''))" 2>/dev/null || true)
-              live_protocol=$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['servers']['inference'].get('protocol_version', ''))" 2>/dev/null || true)
-              [ "$live_version" = "$EXPECTED_VERSION" ] \
-                && [ "$live_sha" = "$EXPECTED_SHA" ] \
-                && [ "$live_inference_status" = "ok" ] \
-                && [ "$live_protocol" = "$EXPECTED_PROTOCOL" ]
-            }
-
-            core_desired_state_matches() {
-              for service in "${CORE_SERVICES[@]}"; do
-                [ "$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "$service")" = "$IMAGE" ] || return 1
-                [ "$(env_value "$service" APP_VERSION)" = "$EXPECTED_VERSION" ] || return 1
-                [ "$(env_value "$service" GIT_COMMIT_SHA)" = "$EXPECTED_SHA" ] || return 1
-              done
-            }
-
-            rollback_and_fail() {
-              reason="$1"
-              echo "Core deployment verification failed: ${reason}. Rolling back core services." >&2
-              while IFS='|' read -r service previous_image previous_version previous_sha; do
-                [ -n "$service" ] || continue
-                docker service update \
-                  --with-registry-auth \
-                  --image "$previous_image" \
-                  --env-rm APP_VERSION \
-                  --env-add "APP_VERSION=${previous_version}" \
-                  --env-rm GIT_COMMIT_SHA \
-                  --env-add "GIT_COMMIT_SHA=${previous_sha}" \
-                  "$service"
-              done <<< "$CORE_BEFORE"
-
-              for rollback_attempt in {1..30}; do
-                response=$(curl --fail --silent --show-error "$CORE_HEALTHCHECK_URL" 2>/dev/null || true)
-                live_version=$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['servers']['api'].get('version', ''))" 2>/dev/null || true)
-                live_sha=$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['servers']['api'].get('commit_sha', ''))" 2>/dev/null || true)
-                if [ "$live_version" = "$PREVIOUS_API_VERSION" ] && [ "$live_sha" = "$PREVIOUS_API_SHA" ] && [ "$(inference_snapshot)" = "$INFERENCE_BEFORE" ]; then
-                  echo "Core rollback verified: version=${live_version} commit_sha=${live_sha}." >&2
-                  exit 1
-                fi
-                echo "Rollback attempt ${rollback_attempt}/30: waiting for core services." >&2
-                sleep 5
-              done
-
-              echo "Rollback was requested but the prior core version did not become healthy." >&2
-              exit 1
-            }
-
-            wait_for_migration() {
-              for attempt in {1..60}; do
-                migration_task=""
-                while read -r candidate; do
-                  if ! printf '%s\n' "$MIGRATION_TASKS_BEFORE" | grep -Fxq "$candidate"; then
-                    migration_task="$candidate"
-                    break
-                  fi
-                done < <(docker service ps -q "$MIGRATION_SERVICE")
-
-                if [ -n "$migration_task" ]; then
-                  state=$(docker inspect --format '{{.Status.State}}' "$migration_task")
-                  error=$(docker inspect --format '{{.Status.Err}}' "$migration_task")
-                  case "$state" in
-                    complete)
-                      echo "Migration job completed."
-                      return 0
-                      ;;
-                    failed|rejected|shutdown)
-                      echo "Migration job ${state}: ${error}" >&2
-                      return 1
-                      ;;
-                  esac
-                fi
-
-                echo "Migration attempt ${attempt}/60: waiting for a successful job task."
-                sleep 5
-              done
-              echo "Timed out waiting for ${MIGRATION_SERVICE}." >&2
-              return 1
-            }
-
-            INFERENCE_BEFORE=$(inference_snapshot)
-            CORE_BEFORE=$(core_snapshot)
-            PREVIOUS_API_VERSION=$(env_value "${STACK}_api" APP_VERSION)
-            PREVIOUS_API_SHA=$(env_value "${STACK}_api" GIT_COMMIT_SHA)
-            [ -n "$PREVIOUS_API_VERSION" ] || { echo "Could not read prior API APP_VERSION." >&2; exit 1; }
-            [ -n "$PREVIOUS_API_SHA" ] || { echo "Could not read prior API GIT_COMMIT_SHA." >&2; exit 1; }
-            if ! inference_has_expected_protocol; then
-              echo "Refusing core deployment: inference does not speak protocol ${EXPECTED_PROTOCOL}." >&2
-              exit 1
-            fi
-
-            echo "${{ secrets.RETREEV_CR_PAT }}" | docker login ghcr.io \
-              --username "${{ github.repository_owner }}" \
-              --password-stdin
-
-            MIGRATION_TASKS_BEFORE=$(docker service ps -q "$MIGRATION_SERVICE" || true)
-            echo "Starting migration job with ${IMAGE}."
-            docker service update \
-              --with-registry-auth \
-              --force \
-              --image "$IMAGE" \
-              --env-rm APP_VERSION \
-              --env-add "APP_VERSION=${EXPECTED_VERSION}" \
-              --env-rm GIT_COMMIT_SHA \
-              --env-add "GIT_COMMIT_SHA=${EXPECTED_SHA}" \
-              "$MIGRATION_SERVICE"
-            wait_for_migration || { echo "Core services were not updated because migrations failed." >&2; exit 1; }
-
-            for service in "${CORE_SERVICES[@]}"; do
-              echo "Updating ${service} to ${IMAGE}."
-              docker service update \
-                --with-registry-auth \
-                --image "$IMAGE" \
-                --env-rm APP_VERSION \
-                --env-add "APP_VERSION=${EXPECTED_VERSION}" \
-                --env-rm GIT_COMMIT_SHA \
-                --env-add "GIT_COMMIT_SHA=${EXPECTED_SHA}" \
-                "$service" || rollback_and_fail "failed to submit the ${service} update"
-            done
-
-            for attempt in {1..30}; do
-              if core_desired_state_matches \
-                && core_is_live \
-                && [ "$(inference_snapshot)" = "$INFERENCE_BEFORE" ]; then
-                echo "Core verified: version=${EXPECTED_VERSION} commit_sha=${EXPECTED_SHA} protocol=${EXPECTED_PROTOCOL}."
-                exit 0
-              fi
-              echo "Attempt ${attempt}/30: waiting for core rollout and compatibility verification."
-              sleep 5
-            done
-
-            rollback_and_fail "core health, inference compatibility, or inference immutability verification failed"
-        timeout-minutes: 9
+          user: deploy
+          ssh_key: ${{ secrets.RETREEV_DEPLOY_SSH_KEY }}
+          registry_auth: true
+          registry_host: ghcr.io
+          registry_user: ${{ github.repository_owner }}
+          registry_pass: ${{ secrets.RETREEV_CR_PAT }}
+          resolve_image: changed
+          prune: true
+          mode: swarm
+          env_file: ./envfile
+          summary: true
 
   release_backend:
     runs-on: ubuntu-24.04
