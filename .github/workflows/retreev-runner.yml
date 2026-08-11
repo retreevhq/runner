@@ -339,12 +339,21 @@ jobs:
           owner: retreevhq
           repositories: "retreev"
           permission-actions: "read"
+          permission-contents: "read"
+
+      - name: Resolve full commit SHA
+        id: full-sha
+        run: |
+          FULL_SHA=$(GH_TOKEN=${{ steps.app-token.outputs.token }} gh api \
+            "repos/${{ github.event.client_payload.source_repo }}/commits/${{ github.event.client_payload.short_sha }}" \
+            --jq .sha)
+          echo "FULL_SHA=$FULL_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Check out deployment configuration
         uses: actions/checkout@v6
         with:
           repository: ${{ github.event.client_payload.source_repo }}
-          ref: ${{ github.event.client_payload.short_sha }}
+          ref: ${{ steps.full-sha.outputs.FULL_SHA }}
           token: ${{ steps.app-token.outputs.token }}
           sparse-checkout: ops
 
@@ -670,12 +679,21 @@ jobs:
           owner: retreevhq
           repositories: "retreev"
           permission-actions: "read"
+          permission-contents: "read"
+
+      - name: Resolve full commit SHA
+        id: full-sha
+        run: |
+          FULL_SHA=$(GH_TOKEN=${{ steps.app-token.outputs.token }} gh api \
+            "repos/${{ github.event.client_payload.source_repo }}/commits/${{ github.event.client_payload.short_sha }}" \
+            --jq .sha)
+          echo "FULL_SHA=$FULL_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Check out deployment configuration
         uses: actions/checkout@v6
         with:
           repository: ${{ github.event.client_payload.source_repo }}
-          ref: ${{ github.event.client_payload.short_sha }}
+          ref: ${{ steps.full-sha.outputs.FULL_SHA }}
           token: ${{ steps.app-token.outputs.token }}
           sparse-checkout: ops
 
