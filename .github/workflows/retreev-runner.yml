@@ -357,19 +357,6 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           sparse-checkout: ops
 
-      - name: Download backend source artifact
-        run: |
-          GH_TOKEN=${{ steps.app-token.outputs.token }} gh api \
-            "repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip" \
-            > /tmp/artifact.zip
-
-      - name: Extract source code
-        run: |
-          mkdir -p backend
-          unzip -p /tmp/artifact.zip backend-src.tar.gz > /tmp/backend-src.tar.gz
-          tar -xzf /tmp/backend-src.tar.gz -C backend
-          rm -f /tmp/artifact.zip /tmp/backend-src.tar.gz
-
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -696,19 +683,6 @@ jobs:
           ref: ${{ steps.full-sha.outputs.FULL_SHA }}
           token: ${{ steps.app-token.outputs.token }}
           sparse-checkout: ops
-
-      - name: Download backend source artifact
-        run: |
-          GH_TOKEN=${{ steps.app-token.outputs.token }} gh api \
-            "repos/${{ github.event.client_payload.source_repo }}/actions/artifacts/${{ github.event.client_payload.artifact_id }}/zip" \
-            > /tmp/artifact.zip
-
-      - name: Extract source code
-        run: |
-          mkdir -p backend
-          unzip -p /tmp/artifact.zip backend-src.tar.gz > /tmp/backend-src.tar.gz
-          tar -xzf /tmp/backend-src.tar.gz -C backend
-          rm -f /tmp/artifact.zip /tmp/backend-src.tar.gz
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
