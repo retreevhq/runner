@@ -10,11 +10,12 @@ env:
   REGISTRY: ghcr.io
 
 concurrency:
-  group: retreev-${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.component }}
+  group: retreev-${{ github.event.client_payload.env_short }}-core
   cancel-in-progress: false
 
 jobs:
   test:
+    if: ${{ github.event.client_payload.component == 'core' || github.event.client_payload.component == 'full' }}
     runs-on: ubuntu-24.04
 
     steps:
@@ -91,7 +92,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: ./backend
-          file: ./backend/Dockerfile
+          file: ./backend/core/Dockerfile
           target: dev
           tags: retreev-test:${{ github.event.client_payload.short_sha }}
           load: true
@@ -113,7 +114,7 @@ jobs:
         run: docker image prune -f || true
 
   build_core:
-    if: ${{ github.event.client_payload.component != 'inference' }}
+    if: ${{ github.event.client_payload.component == 'core' || github.event.client_payload.component == 'full' }}
     runs-on: ubuntu-24.04
     outputs:
       image_digest: ${{ steps.build.outputs.digest }}
@@ -196,7 +197,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: ./backend
-          file: ./backend/Dockerfile
+          file: ./backend/core/Dockerfile
           target: cpu-base
           push: true
           provenance: false
@@ -216,7 +217,7 @@ jobs:
         run: docker image prune -f || true
 
   build_inference:
-    if: ${{ github.event.client_payload.component != 'core' }}
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     outputs:
       image_digest: ${{ steps.build.outputs.digest }}
@@ -280,9 +281,9 @@ jobs:
         id: cache-uv
         with:
           path: backend/cache-mount
-          key: uv-${{ runner.os }}-${{ hashFiles('backend/uv.lock') }}
+          key: uv-inference-${{ runner.os }}-${{ hashFiles('backend/inference/pyproject.toml', 'backend/inference/uv.lock') }}
           restore-keys: |
-            uv-${{ runner.os }}-
+            uv-inference-${{ runner.os }}-
 
       - name: Restore UV cache mounts
         uses: reproducible-containers/buildkit-cache-dance@v3
@@ -299,8 +300,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: ./backend
-          file: ./backend/Dockerfile
-          target: inference
+          file: ./backend/inference/Dockerfile
           push: true
           provenance: false
           tags: |
@@ -309,7 +309,6 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_tag }}
           cache-from: |
             type=gha,scope=inference
-            type=gha,scope=core
           cache-to: type=gha,scope=inference,mode=max
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.event.client_payload.source_repo }}
@@ -321,7 +320,7 @@ jobs:
         run: docker image prune -f || true
 
   deploy_full:
-    if: ${{ github.event.client_payload.component == 'full' }}
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     needs: [test, build_core, build_inference]
     # needs: [build_core]
@@ -340,6 +339,14 @@ jobs:
           owner: retreevhq
           repositories: "retreev"
           permission-actions: "read"
+
+      - name: Check out deployment configuration
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.client_payload.source_repo }}
+          ref: ${{ github.event.client_payload.short_sha }}
+          token: ${{ steps.app-token.outputs.token }}
+          sparse-checkout: ops
 
       - name: Download backend source artifact
         run: |
@@ -382,11 +389,32 @@ jobs:
           echo "INFERENCE_VERSION=${{ github.event.client_payload.version }}" >> ./envfile
           echo "INFERENCE_GIT_COMMIT_SHA=${{ github.event.client_payload.short_sha }}" >> ./envfile
 
-      - name: Deploy
+      # Deploy inference first so the core stack can safely prune any legacy
+      # inference service left from the former combined topology.
+      - name: Deploy inference stack
+        uses: cssnr/stack-deploy-action@v1.5.0
+        with:
+          name: retreev_${{ github.event.client_payload.env_short }}_inference
+          file: ops/infra/inference/stack.base.yml ops/infra/inference/stack.${{ github.event.client_payload.env_short }}.yml
+          host: ${{ secrets.RETREEV_DEPLOY_HOST }}
+          port: 22
+          user: deploy
+          ssh_key: ${{ secrets.RETREEV_DEPLOY_SSH_KEY }}
+          registry_auth: true
+          registry_host: ghcr.io
+          registry_user: ${{ github.repository_owner }}
+          registry_pass: ${{ secrets.RETREEV_CR_PAT }}
+          resolve_image: changed
+          prune: true
+          mode: swarm
+          env_file: ./envfile
+          summary: true
+
+      - name: Deploy core stack
         uses: cssnr/stack-deploy-action@v1.5.0
         with:
           name: retreev_${{ github.event.client_payload.env_short }}
-          file: backend/infra/stack.base.yml backend/infra/stack.${{ github.event.client_payload.env_short }}.yml
+          file: ops/infra/core/stack.base.yml ops/infra/core/stack.${{ github.event.client_payload.env_short }}.yml
           host: ${{ secrets.RETREEV_DEPLOY_HOST }}
           port: 22
           user: deploy
@@ -402,7 +430,7 @@ jobs:
           summary: true
 
   verify_core_full:
-    if: ${{ github.event.client_payload.component == 'full' }}
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     needs: [deploy_full]
     environment: ${{ github.event.client_payload.env_name }}
@@ -422,7 +450,7 @@ jobs:
 
             echo "Waiting for services to be healthy..."
             for i in {1..30}; do
-              REPLICAS=$(docker service ls --filter name=retreev_${{ github.event.client_payload.env_short }} --format "{{.Replicas}}")
+              REPLICAS=$(docker service ls --filter name=retreev_${{ github.event.client_payload.env_short }}_api --format "{{.Replicas}}")
               if [ -n "$REPLICAS" ] && ! echo "$REPLICAS" | grep -q "0/"; then
                 RESPONSE=$(curl -s "${{ secrets.RETREEV_BASE_API_URL }}/healthcheck")
                 echo "API healthcheck: $RESPONSE"
@@ -447,7 +475,7 @@ jobs:
         timeout-minutes: 6
 
   verify_inference_full:
-    if: ${{ github.event.client_payload.component == 'full' }}
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     needs: [deploy_full]
     environment: ${{ github.event.client_payload.env_name }}
@@ -467,7 +495,7 @@ jobs:
 
             echo "Waiting for inference service to be healthy..."
             for i in {1..30}; do
-              REPLICAS=$(docker service ls --filter name=retreev_${{ github.event.client_payload.env_short }} --format "{{.Replicas}}")
+              REPLICAS=$(docker service ls --filter name=retreev_${{ github.event.client_payload.env_short }}_inference_inference --format "{{.Replicas}}")
               if [ -n "$REPLICAS" ] && ! echo "$REPLICAS" | grep -q "0/"; then
                 RESPONSE=$(curl -s "${{ secrets.RETREEV_INFERENCE_API_URL }}/healthcheck")
                 echo "Inference healthcheck: $RESPONSE"
@@ -492,7 +520,8 @@ jobs:
         timeout-minutes: 6
 
   deploy_inference:
-    if: ${{ github.event.client_payload.component == 'inference' }}
+    # Inference-only releases run in retreev/deploy.inference.yml.
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     needs: [test, build_inference]
     environment: ${{ github.event.client_payload.env_name }}
@@ -626,7 +655,7 @@ jobs:
         timeout-minutes: 6
 
   deploy_core:
-    if: ${{ github.event.client_payload.component == 'core' }}
+    if: ${{ github.event.client_payload.component == 'core' || github.event.client_payload.component == 'full' }}
     runs-on: ubuntu-24.04
     needs: [test, build_core]
     environment: ${{ github.event.client_payload.env_name }}
@@ -646,11 +675,12 @@ jobs:
             MIGRATION_SERVICE="${STACK}_db_migrate"
             CORE_SERVICES=(
               "${STACK}_api"
-              "${STACK}_worker"
-              "${STACK}_worker_matching"
+              "${STACK}_worker_media"
+              "${STACK}_worker_notifications"
+              "${STACK}_worker_realtime"
               "${STACK}_scheduler"
             )
-            INFERENCE_SERVICE="${STACK}_inference"
+            INFERENCE_SERVICE="${STACK}_inference_inference"
             IMAGE="ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}@${{ needs.build_core.outputs.image_digest }}"
             EXPECTED_VERSION="${{ github.event.client_payload.version }}"
             EXPECTED_SHA="${{ github.event.client_payload.short_sha }}"
@@ -830,7 +860,7 @@ jobs:
   release_backend:
     runs-on: ubuntu-24.04
     needs: [verify_core_full, verify_inference_full]
-    if: ${{ github.event.client_payload.component == 'full' && github.event.client_payload.env_name == 'production' && needs.verify_core_full.result == 'success' && needs.verify_inference_full.result == 'success' }}
+    if: ${{ false }}
     permissions:
       contents: write
 
@@ -918,7 +948,7 @@ jobs:
   release_inference:
     runs-on: ubuntu-24.04
     needs: [deploy_inference]
-    if: ${{ github.event.client_payload.component == 'inference' && github.event.client_payload.env_name == 'production' && needs.deploy_inference.result == 'success' }}
+    if: ${{ false }}
     permissions:
       contents: write
 
@@ -959,7 +989,7 @@ jobs:
 
   notify:
     runs-on: ubuntu-24.04
-    needs: [verify_core_full, verify_inference_full, deploy_core, deploy_inference]
+    needs: [verify_core_full, verify_inference_full, deploy_core]
     if: always()
     environment: ${{ github.event.client_payload.env_name }}
 
@@ -968,9 +998,8 @@ jobs:
         id: status
         run: |
           COMPONENT="${{ github.event.client_payload.component }}"
-          if { [ "$COMPONENT" = "full" ] && [ "${{ needs.verify_core_full.result }}" = "success" ] && [ "${{ needs.verify_inference_full.result }}" = "success" ]; } \
-            || { [ "$COMPONENT" = "core" ] && [ "${{ needs.deploy_core.result }}" = "success" ]; } \
-            || { [ "$COMPONENT" = "inference" ] && [ "${{ needs.deploy_inference.result }}" = "success" ]; }; then
+          if { [ "$COMPONENT" = "full" ] || [ "$COMPONENT" = "core" ]; } \
+            && [ "${{ needs.deploy_core.result }}" = "success" ]; then
             echo "STATUS=✅ SUCCESS" >> "$GITHUB_OUTPUT"
             echo "COLOR=good" >> "$GITHUB_OUTPUT"
           else
