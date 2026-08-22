@@ -91,7 +91,7 @@ jobs:
       - name: Build test image (with dev deps)
         uses: docker/build-push-action@v7
         with:
-          context: ./backend
+          context: ./backend/core
           file: ./backend/core/Dockerfile
           target: dev
           tags: retreev-test:${{ github.event.client_payload.short_sha }}
@@ -200,7 +200,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v7
         with:
-          context: ./backend
+          context: ./backend/core
           file: ./backend/core/Dockerfile
           target: cpu-base
           push: true
@@ -208,6 +208,7 @@ jobs:
           build-contexts: |
             gen=${{ github.workspace }}/backend/gen/python
             scripts=${{ github.workspace }}/backend/scripts
+            tests=${{ github.workspace }}/backend/tests
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
             ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
