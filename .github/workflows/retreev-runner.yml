@@ -96,6 +96,10 @@ jobs:
           target: dev
           tags: retreev-test:${{ github.event.client_payload.short_sha }}
           load: true
+          build-contexts: |
+            gen=${{ github.workspace }}/backend/gen/python
+            scripts=${{ github.workspace }}/backend/scripts
+            tests=${{ github.workspace }}/backend/tests
           cache-from: |
             type=gha,scope=test
             type=gha,scope=core
@@ -201,6 +205,9 @@ jobs:
           target: cpu-base
           push: true
           provenance: false
+          build-contexts: |
+            gen=${{ github.workspace }}/backend/gen/python
+            scripts=${{ github.workspace }}/backend/scripts
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
             ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
@@ -303,6 +310,8 @@ jobs:
           file: ./backend/inference/Dockerfile
           push: true
           provenance: false
+          build-contexts: |
+            gen=${{ github.workspace }}/backend/gen/python
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
             ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
