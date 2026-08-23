@@ -227,9 +227,9 @@ jobs:
             scripts=${{ github.workspace }}/backend/scripts
             tests=${{ github.workspace }}/backend/tests
           tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}:${{ github.event.client_payload.env_tag }}
+            ghcr.io/${{ github.event.client_payload.source_repo }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
+            ghcr.io/${{ github.event.client_payload.source_repo }}:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
+            ghcr.io/${{ github.event.client_payload.source_repo }}:${{ github.event.client_payload.env_tag }}
           cache-from: type=gha,scope=core
           cache-to: type=gha,scope=core,mode=max
           labels: |
@@ -332,9 +332,9 @@ jobs:
             gen=${{ github.workspace }}/backend/gen/python
             models=docker-image://${{ github.event.client_payload.model_bundle_ref }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_tag }}
+            ghcr.io/${{ github.event.client_payload.source_repo }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
+            ghcr.io/${{ github.event.client_payload.source_repo }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
+            ghcr.io/${{ github.event.client_payload.source_repo }}-inference:${{ github.event.client_payload.env_tag }}
           cache-from: |
             type=gha,scope=inference
           cache-to: type=gha,scope=inference,mode=max
