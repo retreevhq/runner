@@ -19,6 +19,23 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      - name: Validate dispatch payload
+        env:
+          COMPONENT: ${{ github.event.client_payload.component }}
+          MODEL_BUNDLE_REF: ${{ github.event.client_payload.model_bundle_ref }}
+        run: |
+          set -euo pipefail
+          case "$COMPONENT" in
+            core|full) ;;
+            *) echo "retreev-runner only accepts core or full deployments." >&2; exit 1 ;;
+          esac
+          if [ "$COMPONENT" = "full" ] \
+            && ! printf '%s' "$MODEL_BUNDLE_REF" \
+              | grep -Eq '^[^[:space:]]+@sha256:[0-9a-f]{64}$'; then
+            echo "Full deployments require a model_bundle_ref pinned by sha256 digest." >&2
+            exit 1
+          fi
+
       - name: Generate Runtime Cross-Repo Token
         uses: actions/create-github-app-token@v3
         id: app-token
@@ -225,7 +242,7 @@ jobs:
         run: docker image prune -f || true
 
   build_inference:
-    if: ${{ false }}
+    if: ${{ github.event.client_payload.component == 'full' }}
     runs-on: ubuntu-24.04
     outputs:
       image_digest: ${{ steps.build.outputs.digest }}
@@ -307,12 +324,13 @@ jobs:
         id: build
         uses: docker/build-push-action@v7
         with:
-          context: ./backend
+          context: ./backend/inference
           file: ./backend/inference/Dockerfile
           push: true
           provenance: false
           build-contexts: |
             gen=${{ github.workspace }}/backend/gen/python
+            models=docker-image://${{ github.event.client_payload.model_bundle_ref }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.short_sha }}
             ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference:${{ github.event.client_payload.env_short }}-${{ github.event.client_payload.version }}
@@ -330,10 +348,9 @@ jobs:
         run: docker image prune -f || true
 
   deploy_full:
-    if: ${{ false }}
+    if: ${{ github.event.client_payload.component == 'full' }}
     runs-on: ubuntu-24.04
     needs: [test, build_core, build_inference]
-    # needs: [build_core]
     environment: ${{ github.event.client_payload.env_name }}
     permissions:
       contents: read
@@ -436,7 +453,7 @@ jobs:
           summary: true
 
   verify_core_full:
-    if: ${{ false }}
+    if: ${{ github.event.client_payload.component == 'full' }}
     runs-on: ubuntu-24.04
     needs: [deploy_full]
     environment: ${{ github.event.client_payload.env_name }}
@@ -458,19 +475,22 @@ jobs:
             for i in {1..30}; do
               REPLICAS=$(docker service ls --filter name=retreev_${{ github.event.client_payload.env_short }}_api --format "{{.Replicas}}")
               if [ -n "$REPLICAS" ] && ! echo "$REPLICAS" | grep -q "0/"; then
-                RESPONSE=$(curl -s "${{ secrets.RETREEV_BASE_API_URL }}/healthcheck")
+                RESPONSE=$(curl --fail --silent --show-error "${{ secrets.RETREEV_BASE_API_URL }}/healthcheck")
                 echo "API healthcheck: $RESPONSE"
 
                 LIVE_VERSION=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['servers']['api']['version'])" 2>/dev/null || true)
                 LIVE_SHA=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['servers']['api']['commit_sha'])" 2>/dev/null || true)
+                LIVE_INFERENCE_STATUS=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['servers']['inference'].get('status', ''))" 2>/dev/null || true)
                 LIVE_PROTOCOL=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['servers']['inference']['protocol_version'])" 2>/dev/null || true)
 
-                if [ "$LIVE_VERSION" = "$EXPECTED_VERSION" ] && [ "$LIVE_SHA" = "$EXPECTED_SHA" ] && [ "$LIVE_PROTOCOL" = "$EXPECTED_PROTOCOL" ]; then
+                if [ "$LIVE_VERSION" = "$EXPECTED_VERSION" ] \
+                  && [ "$LIVE_SHA" = "$EXPECTED_SHA" ] \
+                  && [ "$LIVE_INFERENCE_STATUS" = "ok" ] \
+                  && [ "$LIVE_PROTOCOL" = "$EXPECTED_PROTOCOL" ]; then
                   echo "✅ API verified: version=$LIVE_VERSION commit_sha=$LIVE_SHA inference_protocol=$LIVE_PROTOCOL"
                   exit 0
                 else
-                  echo "❌ Core or inference protocol mismatch (got version=$LIVE_VERSION sha=$LIVE_SHA protocol=$LIVE_PROTOCOL, expected version=$EXPECTED_VERSION sha=$EXPECTED_SHA protocol=$EXPECTED_PROTOCOL)"
-                  exit 1
+                  echo "Core or inference pending: version=${LIVE_VERSION:-missing} sha=${LIVE_SHA:-missing} inference_status=${LIVE_INFERENCE_STATUS:-missing} protocol=${LIVE_PROTOCOL:-missing}"
                 fi
               fi
               echo "Attempt $i/30: Services not ready yet, retrying in 5s..."
@@ -481,9 +501,9 @@ jobs:
         timeout-minutes: 6
 
   verify_inference_full:
-    if: ${{ false }}
+    if: ${{ github.event.client_payload.component == 'full' }}
     runs-on: ubuntu-24.04
-    needs: [deploy_full]
+    needs: [deploy_full, build_inference]
     environment: ${{ github.event.client_payload.env_name }}
 
     steps:
@@ -495,27 +515,49 @@ jobs:
           username: deploy
           key: ${{ secrets.RETREEV_DEPLOY_SSH_KEY }}
           script: |
+            set -euo pipefail
+
+            SERVICE="retreev_${{ github.event.client_payload.env_short }}_inference_server"
             EXPECTED_VERSION="${{ github.event.client_payload.version }}"
             EXPECTED_SHA="${{ github.event.client_payload.short_sha }}"
             EXPECTED_PROTOCOL="${{ github.event.client_payload.inference_protocol_version }}"
+            EXPECTED_DIGEST="${{ needs.build_inference.outputs.image_digest }}"
+            API_HEALTHCHECK="${{ secrets.RETREEV_BASE_API_URL }}/healthcheck"
 
-            echo "Waiting for inference service to be healthy..."
+            service_env_value() {
+              docker service inspect \
+                --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' \
+                "$SERVICE" \
+                | awk -F= -v key="$1" '$1 == key {sub(/^[^=]*=/, ""); print; exit}'
+            }
+
+            echo "Waiting for the gRPC inference service and API health path..."
             for i in {1..30}; do
-              REPLICAS=$(docker service ls --filter name=retreev_${{ github.event.client_payload.env_short }}_inference_inference --format "{{.Replicas}}")
+              REPLICAS=$(docker service ls --filter name="$SERVICE" --format "{{.Replicas}}")
               if [ -n "$REPLICAS" ] && ! echo "$REPLICAS" | grep -q "0/"; then
-                RESPONSE=$(curl -s "${{ secrets.RETREEV_INFERENCE_API_URL }}/healthcheck")
-                echo "Inference healthcheck: $RESPONSE"
+                IMAGE=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "$SERVICE")
+                LIVE_VERSION=$(service_env_value APP_VERSION)
+                LIVE_SHA=$(service_env_value GIT_COMMIT_SHA)
+                RESPONSE=$(curl --fail --silent --show-error "$API_HEALTHCHECK" 2>/dev/null || true)
+                LIVE_STATUS=$(printf '%s' "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin)['servers']['inference'].get('status', ''))" 2>/dev/null || true)
+                LIVE_PROTOCOL=$(printf '%s' "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin)['servers']['inference'].get('protocol_version', ''))" 2>/dev/null || true)
 
-                LIVE_VERSION=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['version'])" 2>/dev/null || true)
-                LIVE_SHA=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['commit_sha'])" 2>/dev/null || true)
-                LIVE_PROTOCOL=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['protocol_version'])" 2>/dev/null || true)
-
-                if [ "$LIVE_VERSION" = "$EXPECTED_VERSION" ] && [ "$LIVE_SHA" = "$EXPECTED_SHA" ] && [ "$LIVE_PROTOCOL" = "$EXPECTED_PROTOCOL" ]; then
-                  echo "✅ Inference verified: version=$LIVE_VERSION commit_sha=$LIVE_SHA protocol=$LIVE_PROTOCOL"
-                  exit 0
+                if [ "$LIVE_VERSION" = "$EXPECTED_VERSION" ] \
+                  && [ "$LIVE_SHA" = "$EXPECTED_SHA" ] \
+                  && [ "$LIVE_STATUS" = "ok" ] \
+                  && [ "$LIVE_PROTOCOL" = "$EXPECTED_PROTOCOL" ]; then
+                  case "$IMAGE" in
+                    *-inference:*@"$EXPECTED_DIGEST"|*-inference@"$EXPECTED_DIGEST")
+                      echo "Inference verified through Core's gRPC health path: image=$IMAGE version=$LIVE_VERSION commit_sha=$LIVE_SHA protocol=$LIVE_PROTOCOL"
+                      exit 0
+                      ;;
+                    *)
+                      echo "Inference is healthy but uses unexpected image $IMAGE" >&2
+                      exit 1
+                      ;;
+                  esac
                 else
-                  echo "❌ Version or protocol mismatch (got version=$LIVE_VERSION sha=$LIVE_SHA protocol=$LIVE_PROTOCOL, expected version=$EXPECTED_VERSION sha=$EXPECTED_SHA protocol=$EXPECTED_PROTOCOL)"
-                  exit 1
+                  echo "Inference pending: replicas=$REPLICAS status=${LIVE_STATUS:-missing} version=${LIVE_VERSION:-missing} sha=${LIVE_SHA:-missing} protocol=${LIVE_PROTOCOL:-missing}"
                 fi
               fi
               echo "Attempt $i/30: Services not ready yet, retrying in 5s..."
@@ -525,143 +567,8 @@ jobs:
             exit 1
         timeout-minutes: 6
 
-  deploy_inference:
-    # Inference-only releases run in retreev/deploy.inference.yml.
-    if: ${{ false }}
-    runs-on: ubuntu-24.04
-    needs: [test, build_inference]
-    environment: ${{ github.event.client_payload.env_name }}
-
-    steps:
-      - name: Update, verify, and roll back inference if needed
-        uses: appleboy/ssh-action@v1.2.5
-        with:
-          host: "${{ secrets.RETREEV_DEPLOY_HOST }}"
-          port: 22
-          username: deploy
-          key: ${{ secrets.RETREEV_DEPLOY_SSH_KEY }}
-          script: |
-            set -euo pipefail
-
-            STACK="retreev_${{ github.event.client_payload.env_short }}"
-            SERVICE="${STACK}_inference"
-            IMAGE="ghcr.io/${{ github.repository_owner }}/${{ github.event.client_payload.repo_name }}-inference@${{ needs.build_inference.outputs.image_digest }}"
-            EXPECTED_VERSION="${{ github.event.client_payload.version }}"
-            EXPECTED_SHA="${{ github.event.client_payload.short_sha }}"
-            EXPECTED_PROTOCOL="${{ github.event.client_payload.inference_protocol_version }}"
-            HEALTHCHECK_URL="${{ secrets.RETREEV_INFERENCE_API_URL }}/healthcheck"
-            CORE_HEALTHCHECK_URL="${{ secrets.RETREEV_BASE_API_URL }}/healthcheck"
-
-            service_env() {
-              docker service inspect --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' "$1"
-            }
-
-            env_value() {
-              service_env "$1" | awk -F= -v key="$2" '$1 == key {sub(/^[^=]*=/, ""); print; exit}'
-            }
-
-            core_snapshot() {
-              docker service ls \
-                --filter "label=com.docker.stack.namespace=${STACK}" \
-                --format '{{.Name}}' \
-                | sort \
-                | while read -r candidate; do
-                    [ "$candidate" = "$SERVICE" ] && continue
-                    image=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "$candidate")
-                    version=$(env_value "$candidate" APP_VERSION)
-                    sha=$(env_value "$candidate" GIT_COMMIT_SHA)
-                    printf '%s|%s|%s|%s\n' "$candidate" "$image" "$version" "$sha"
-                  done
-            }
-
-            core_accepts_protocol() {
-              response=$(curl --fail --silent --show-error "$CORE_HEALTHCHECK_URL" 2>/dev/null || true)
-              core_status=$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin)['servers']['inference'].get('status', ''))" 2>/dev/null || true)
-              core_protocol=$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin)['servers']['inference'].get('protocol_version', ''))" 2>/dev/null || true)
-              [ "$core_status" = "ok" ] && [ "$core_protocol" = "$EXPECTED_PROTOCOL" ]
-            }
-
-            rollback_and_fail() {
-              reason="$1"
-              echo "Inference deployment verification failed: ${reason}. Rolling back ${SERVICE}." >&2
-              docker service update \
-                --with-registry-auth \
-                --image "$PREVIOUS_IMAGE" \
-                --env-rm APP_VERSION \
-                --env-add "APP_VERSION=${PREVIOUS_VERSION}" \
-                --env-rm GIT_COMMIT_SHA \
-                --env-add "GIT_COMMIT_SHA=${PREVIOUS_SHA}" \
-                "$SERVICE"
-
-              for rollback_attempt in {1..30}; do
-                response=$(curl --fail --silent --show-error "$HEALTHCHECK_URL" 2>/dev/null || true)
-                live_version=$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin).get('version', ''))" 2>/dev/null || true)
-                live_sha=$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin).get('commit_sha', ''))" 2>/dev/null || true)
-                live_protocol=$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin).get('protocol_version', ''))" 2>/dev/null || true)
-
-                if [ "$live_version" = "$PREVIOUS_VERSION" ] && [ "$live_sha" = "$PREVIOUS_SHA" ] && [ "$live_protocol" = "$PREVIOUS_PROTOCOL" ]; then
-                  echo "Rollback verified: version=${live_version} commit_sha=${live_sha}." >&2
-                  exit 1
-                fi
-
-                echo "Rollback attempt ${rollback_attempt}/30: waiting for ${SERVICE}." >&2
-                sleep 5
-              done
-
-              echo "Rollback was requested but the prior inference version did not become healthy." >&2
-              exit 1
-            }
-
-            PREVIOUS_IMAGE=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "$SERVICE")
-            PREVIOUS_VERSION=$(env_value "$SERVICE" APP_VERSION)
-            PREVIOUS_SHA=$(env_value "$SERVICE" GIT_COMMIT_SHA)
-            previous_response=$(curl --fail --silent --show-error "$HEALTHCHECK_URL" 2>/dev/null || true)
-            PREVIOUS_PROTOCOL=$(printf '%s' "$previous_response" | python3 -c "import json,sys; print(json.load(sys.stdin).get('protocol_version', ''))" 2>/dev/null || true)
-            [ -n "$PREVIOUS_VERSION" ] || { echo "Could not read prior inference APP_VERSION." >&2; exit 1; }
-            [ -n "$PREVIOUS_SHA" ] || { echo "Could not read prior inference GIT_COMMIT_SHA." >&2; exit 1; }
-            [ -n "$PREVIOUS_PROTOCOL" ] || { echo "Could not read prior inference protocol version." >&2; exit 1; }
-            CORE_BEFORE=$(core_snapshot)
-
-            echo "Updating ${SERVICE} from ${PREVIOUS_IMAGE} to ${IMAGE}."
-            echo "${{ secrets.RETREEV_CR_PAT }}" | docker login ghcr.io \
-              --username "${{ github.repository_owner }}" \
-              --password-stdin
-            docker service update \
-              --with-registry-auth \
-              --image "$IMAGE" \
-              --env-rm APP_VERSION \
-              --env-add "APP_VERSION=${EXPECTED_VERSION}" \
-              --env-rm GIT_COMMIT_SHA \
-              --env-add "GIT_COMMIT_SHA=${EXPECTED_SHA}" \
-              "$SERVICE"
-
-            for attempt in {1..30}; do
-              response=$(curl --fail --silent --show-error "$HEALTHCHECK_URL" 2>/dev/null || true)
-              live_version=$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin).get('version', ''))" 2>/dev/null || true)
-              live_sha=$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin).get('commit_sha', ''))" 2>/dev/null || true)
-              live_protocol=$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin).get('protocol_version', ''))" 2>/dev/null || true)
-
-              if [ "$live_version" = "$EXPECTED_VERSION" ] && [ "$live_sha" = "$EXPECTED_SHA" ] && [ "$live_protocol" = "$EXPECTED_PROTOCOL" ]; then
-                CORE_AFTER=$(core_snapshot)
-                if [ "$CORE_BEFORE" != "$CORE_AFTER" ]; then
-                  rollback_and_fail "a non-inference service image or deployment metadata changed"
-                fi
-                if ! core_accepts_protocol; then
-                  rollback_and_fail "the deployed core does not accept inference protocol ${EXPECTED_PROTOCOL}"
-                fi
-                echo "Inference verified: version=${live_version} commit_sha=${live_sha} protocol=${live_protocol}"
-                exit 0
-              fi
-
-              echo "Attempt ${attempt}/30: expected version=${EXPECTED_VERSION} sha=${EXPECTED_SHA}; waiting for inference."
-              sleep 5
-            done
-
-            rollback_and_fail "healthcheck did not report the requested version and commit SHA"
-        timeout-minutes: 6
-
   deploy_core:
-    if: ${{ github.event.client_payload.component == 'core' || github.event.client_payload.component == 'full' }}
+    if: ${{ github.event.client_payload.component == 'core' }}
     runs-on: ubuntu-24.04
     needs: [test, build_core]
     environment: ${{ github.event.client_payload.env_name }}
@@ -744,7 +651,7 @@ jobs:
   release_backend:
     runs-on: ubuntu-24.04
     needs: [verify_core_full, verify_inference_full]
-    if: ${{ false }}
+    if: ${{ github.event.client_payload.component == 'full' && github.event.client_payload.env_name == 'production' && needs.verify_core_full.result == 'success' && needs.verify_inference_full.result == 'success' }}
     permissions:
       contents: write
 
@@ -829,51 +736,9 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
-  release_inference:
-    runs-on: ubuntu-24.04
-    needs: [deploy_inference]
-    if: ${{ false }}
-    permissions:
-      contents: write
-
-    steps:
-      - name: Generate Runtime Cross-Repo Token
-        uses: actions/create-github-app-token@v3
-        id: app-token
-        with:
-          client-id: ${{ secrets.RETREEV_CLIENT_ID }}
-          private-key: ${{ secrets.RETREEV_APP_PRIVATE_KEY }}
-          owner: retreevhq
-          repositories: "retreev"
-          permission-contents: "write"
-
-      - name: Checkout source code from Retreev
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ github.event.client_payload.source_repo }}
-          token: ${{ steps.app-token.outputs.token }}
-          fetch-depth: 0
-
-      - name: Create inference release
-        run: |
-          TAG="inference/${{ github.event.client_payload.version }}"
-          if git tag -l --format="%(contents)" "$TAG" | grep -q .; then
-            gh release create "$TAG" \
-              --title "Inference ${{ github.event.client_payload.version }}" \
-              --notes-from-tag \
-              --verify-tag
-          else
-            gh release create "$TAG" \
-              --title "Inference ${{ github.event.client_payload.version }}" \
-              --generate-notes \
-              --verify-tag
-          fi
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-
   notify:
     runs-on: ubuntu-24.04
-    needs: [verify_core_full, verify_inference_full, deploy_core]
+    needs: [verify_core_full, verify_inference_full, deploy_full, deploy_core]
     if: always()
     environment: ${{ github.event.client_payload.env_name }}
 
@@ -882,7 +747,13 @@ jobs:
         id: status
         run: |
           COMPONENT="${{ github.event.client_payload.component }}"
-          if { [ "$COMPONENT" = "full" ] || [ "$COMPONENT" = "core" ]; } \
+          if [ "$COMPONENT" = "full" ] \
+            && [ "${{ needs.deploy_full.result }}" = "success" ] \
+            && [ "${{ needs.verify_core_full.result }}" = "success" ] \
+            && [ "${{ needs.verify_inference_full.result }}" = "success" ]; then
+            echo "STATUS=✅ SUCCESS" >> "$GITHUB_OUTPUT"
+            echo "COLOR=good" >> "$GITHUB_OUTPUT"
+          elif [ "$COMPONENT" = "core" ] \
             && [ "${{ needs.deploy_core.result }}" = "success" ]; then
             echo "STATUS=✅ SUCCESS" >> "$GITHUB_OUTPUT"
             echo "COLOR=good" >> "$GITHUB_OUTPUT"
